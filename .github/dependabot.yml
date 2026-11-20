@@ -1,0 +1,31 @@
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      spring:
+        patterns: ['org.springframework*']
+    ignore:
+      # Версію kite-contracts піднімає workflow contracts-bump одразу після
+      # релізу — одну на всі репозиторії (5.4, п. 6). Dependabot тут лише дублював би PR.
+      - dependency-name: 'ua.kite:kite-contracts'
+      # 5.1 документації фіксує Spring Boot 3. Перехід на 4.x — рішення
+      # рівня документації, а не окремого сервіса, тож мажор не пропонуємо.
+      - dependency-name: 'org.springframework.boot:spring-boot-starter-parent'
+        update-types: ['version-update:semver-major']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    ignore:
+      # Java 21 — теж із 5.1. Java 25 уже LTS, але стрибок робиться разом
+      # з усіма 12 сервісами, а не поодинці.
+      - dependency-name: 'eclipse-temurin'
+        update-types: ['version-update:semver-major']

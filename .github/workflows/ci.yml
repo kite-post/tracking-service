@@ -1,0 +1,16 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ci:
+    uses: kite-post/.github/.github/workflows/java-service.yml@main
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit

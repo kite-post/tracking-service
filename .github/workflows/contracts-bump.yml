@@ -1,0 +1,25 @@
+name: contracts-bump
+
+# Новий тег kite-contracts → PR з make contracts V=<версія> (5.4, п. 6).
+# Подію розсилає kite-contracts усім репозиторіям із топіком kite-contracts;
+# руками — Actions → contracts-bump → Run workflow.
+on:
+  repository_dispatch:
+    types: [kite-contracts-released]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Версія kite-contracts, напр. 0.2.0
+        required: true
+
+jobs:
+  bump:
+    uses: kite-post/.github/.github/workflows/contracts-bump.yml@main
+    with:
+      kind: java
+      version: ${{ github.event.client_payload.version || inputs.version }}
+    permissions:
+      contents: write
+      pull-requests: write
+      packages: read
+    secrets: inherit

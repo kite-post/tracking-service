@@ -1,0 +1,93 @@
+spring:
+  application:
+    name: service-template
+  threads:
+    virtual:
+      enabled: true
+
+  # Локальні значення за замовчуванням: база стенда на localhost:5432 з тим
+  # самим іменем і власником, що в kite-infra (config/postgres/init).
+  # У контейнері стенд перекриває їх через SPRING_DATASOURCE_*.
+  # `make run` піднімає свої Postgres і Kafka контейнерами й підставляє їх сам.
+  datasource:
+    url: jdbc:postgresql://localhost:5432/servicetemplate
+    username: servicetemplate
+    password: kite
+    hikari:
+      maximum-pool-size: 10
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Схему веде Flyway; Hibernate лише звіряє, що сутності з нею збігаються.
+      ddl-auto: validate
+  flyway:
+    # V1 — транспорт подій (outbox, processed_event); таблиці сервіса — з V2.
+    locations: classpath:db/migration
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # NFR-04: подія вважається відправленою, коли її записали всі репліки.
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        linger.ms: 5
+        request.timeout.ms: 10000
+        delivery.timeout.ms: 30000
+    consumer:
+      group-id: ${spring.application.name}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    admin:
+      # Немає брокера на старті — сервіс усе одно піднімається, а outbox
+      # накопичує події до його появи.
+      fail-fast: false
+
+server:
+  port: 8080
+  shutdown: graceful
+
+kite:
+  # Тег образу, з якого піднявся контейнер — його підставляє compose у kite-infra.
+  version: ${KITE_IMAGE_TAG:dev}
+
+  events:
+    outbox:
+      enabled: true
+      poll-interval: 200ms
+      batch-size: 200
+      send-timeout: 30s
+      retention: 7d
+    inbox:
+      # Довше за ретеншен топіків Kafka (7 діб за замовчуванням).
+      retention: 14d
+    dead-letter-topic: dlt.${spring.application.name}
+    dead-letter-replicas: 1
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+      group:
+        # Ready — коли є база. Kafka сюди свідомо не входить: без брокера
+        # сервіс працює далі, а події чекають в outbox.
+        readiness:
+          include: readinessState,db
+  metrics:
+    tags:
+      service: ${spring.application.name}
+
+logging:
+  pattern:
+    # Формат під Loki: рівень, трейс, сервіс, повідомлення.
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{24} - %msg%n"
