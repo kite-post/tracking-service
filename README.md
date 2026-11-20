@@ -12,7 +12,7 @@ make rename NAME=shipment-service
 git add -A && git commit -m "Перейменувати шаблон у shipment-service" && git push
 ```
 
-`make rename` перейменовує артефакт, пакет (`ua.kite.servicetemplate` →
+`make rename` перейменовує артефакт, пакет (`ua.kite.tracking` →
 `ua.kite.shipment`), клас застосунку, ім'я образу і базу (`shipment` — так
 вона називається на стенді). Без нього репозиторій теж збирається і проходить
 CI — просто під іменем шаблону.
@@ -65,7 +65,7 @@ make run-stand  # запустити локально проти стенда ki
 make up         # підняти образ на 8080 з лімітом 384 МБ у мережі стенда
 ```
 
-`make run` — це `spring-boot:test-run` з `ServiceTemplateDevApplication`: той
+`make run` — це `spring-boot:test-run` з `TrackingDevApplication`: той
 самий застосунок плюс `TestcontainersConfiguration`. З IDE — запустити `main`
 цього класу.
 

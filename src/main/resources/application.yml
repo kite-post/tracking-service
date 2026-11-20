@@ -1,6 +1,6 @@
 spring:
   application:
-    name: service-template
+    name: tracking-service
   threads:
     virtual:
       enabled: true
@@ -10,8 +10,8 @@ spring:
   # У контейнері стенд перекриває їх через SPRING_DATASOURCE_*.
   # `make run` піднімає свої Postgres і Kafka контейнерами й підставляє їх сам.
   datasource:
-    url: jdbc:postgresql://localhost:5432/servicetemplate
-    username: servicetemplate
+    url: jdbc:postgresql://localhost:5432/tracking
+    username: tracking
     password: kite
     hikari:
       maximum-pool-size: 10

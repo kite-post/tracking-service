@@ -10,9 +10,9 @@
   </parent>
 
   <groupId>ua.kite</groupId>
-  <artifactId>service-template</artifactId>
+  <artifactId>tracking-service</artifactId>
   <version>0.1.0-SNAPSHOT</version>
-  <name>service-template</name>
+  <name>tracking-service</name>
   <description>Шаблон Java-сервіса Kite</description>
 
   <properties>
