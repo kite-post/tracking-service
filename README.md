@@ -1,34 +1,64 @@
-# template-java-service
+# tracking-service
 
-Шаблон репозиторію для Java-сервіса Kite: Spring Boot 3, Java 21, образ у GHCR,
-CI з одного рядка. Із нього створюються 12 Java-сервісів (5.6).
+Журнал подій відстеження, таймлайн, дашборди «мені / від мене», публічне
+відстеження (5.1). Власник історії (8.1): споживає події з Kafka і дописує їх
+у `tracking_event`, з якого будуються всі проєкції читання. У shipment-service
+нічого не пише і стану не змінює. Створено з `template-java-service`.
 
-## Новий сервіс
+## Що вже вміє
 
-```bash
-gh repo create kite-post/shipment-service --public --template kite-post/template-java-service
-cd shipment-service
-make rename NAME=shipment-service
-git add -A && git commit -m "Перейменувати шаблон у shipment-service" && git push
-```
+Каркас споживача — **лише журнал**, без проєкцій і REST:
 
-`make rename` перейменовує артефакт, пакет (`ua.kite.tracking` →
-`ua.kite.shipment`), клас застосунку, ім'я образу і базу (`shipment` — так
-вона називається на стенді). Без нього репозиторій теж збирається і проходить
-CI — просто під іменем шаблону.
+- слухає `shipment.events` (`@KafkaListener` `tracking-journal`, група
+  `tracking-service`) і дописує події в `tracking_event` (міграція `V2`);
+- ідемпотентність у два рубежі (8.3, п. 3):
+  1. `processed_event(consumer, event_id)` в одній транзакції із записом —
+     повтор пропускається ще до мапінгу;
+  2. первинний ключ журналу `(event_id, occurred_at)` + `ON CONFLICT DO NOTHING`
+     — дубля немає, навіть коли позначку вже прибрав ретеншен (14 діб), а топік
+     переграли. `occurred_at` береться з події, тож повтор потрапляє в ту саму
+     партицію;
+- партиції по місяцях за `occurred_at` (UTC), `tracking_event_2026_11`;
+  створює їх функція бази `tracking_event_ensure_partition`: на старті й
+  щоночі — поточний місяць і `kite.tracking.partitions.months-ahead` (3)
+  наперед, а для події з місяця без партиції — на льоту перед записом.
+  DEFAULT-партиції немає свідомо: з рядками в ній Postgres не дасть створити
+  партицію цього місяця;
+- журнал лише для додавання — `UPDATE` і `DELETE` відхиляє тригер бази (8.1);
+- індекс `(shipment_id, occurred_at)` для таймлайну (6.3); `upu_code` для
+  KT10 / KT30 / KT50 → EMA / EMG / EMI (8.2).
 
-### Від шаблону до першої події
+Що з `shipment.events` іде в журнал (одна подія — щонайбільше один рядок):
 
-1. `gh repo create … --template` і `make rename NAME=…` — як вище.
-2. `make run` — сервіс піднімається з власними Postgres і Kafka в контейнерах,
-   ставити нічого не треба (лише Docker).
-3. Таблиці сервіса — у `src/main/resources/db/migration/V2__….sql` і далі
-   (V1 — транспорт подій, його не чіпати). Сутності — JPA, ключі — `UuidV7.next()`.
-4. Події, які сервіс публікує: `outbox.append(...)` у тій самій транзакції,
-   що й зміна. Топік і ключ розділу візьмуться з реєстру `kite-contracts`.
-5. Події, які сервіс слухає: свій `@KafkaListener` за зразком
-   `example/ShipmentEventsListener`, а сам пакет `example` — видалити.
-6. `make verify` — те саме, що прожене CI; `git push`.
+| Тип                  | Рядок                                                        |
+| -------------------- | ------------------------------------------------------------ |
+| `created`            | KT01 / CREATED — лише якщо не чернетка; DRAFT коду не має     |
+| `confirmed`          | KT01 / CREATED (T1)                                          |
+| `cancelled`          | KT03 / CANCELLED                                             |
+| `status-changed`     | `eventCode`, `statusAfter`, `locationId` з події             |
+| `redirected`         | KT60 до прибуття; після прибуття KT62 дає `status-changed`   |
+| `recipient-changed`  | KT61                                                         |
+| `hold-set`, `return-created`, решта | ні — KT32, KT70, KT71 приходять у `status-changed` |
+
+Подія без `time`, `source`, `shipmentId` чи (для `status-changed`)
+`eventCode` / `statusAfter` — бита, одразу в `dlt.tracking-service`.
+
+Чого ще немає — свідомо, окремими задачами:
+
+- розгортання `kite.scan.unit-scanned.v1` у події посилок (8.3, п. 2) і решта
+  топіків (`scan`, `logistics`, `locker`);
+- карантин за розходженням `occurred_at` і `received_at` понад 24 год і
+  спізнілі події після кінцевого стану (8.3, п. 5);
+- анулювання KT90 і перерахунок (8.3, п. 6);
+- проєкції `shipment_view`, `party_shipment_index`, Redis, REST.
+
+Відкрите питання до shipment-service: коли з'явиться `"draft": false`, на
+один перехід T1 має йти або `created` зі статусом CREATED, або `confirmed`,
+а не обидві — інакше в журналі буде два KT01.
+
+Критерій «повторна доставка не створює дубля» перевіряє `TrackingJournalIT`
+на справжніх Postgres і Kafka: та сама подія тричі через топік — один рядок;
+повтор після видалення позначки з `processed_event` — теж один.
 
 ## Що всередині
 
@@ -36,14 +66,15 @@ CI — просто під іменем шаблону.
 pom.xml                   Spring Boot 3.5, Java 21, JPA, Flyway, Kafka, Spotless, Failsafe
 src/main/java
   web/                    один ендпоїнт /api/v1/info
+  journal/                споживач shipment.events, мапінг у рядок журналу, запис, партиції
   common/UuidV7           первинні ключі й id подій (6.1)
   events/                 конверт CloudEvents, реєстр подій, DLT, прибирання
   events/outbox/          запис в outbox, публікатор, метрики відставання
   events/inbox/           ідемпотентна обробка вхідних подій (processed_event)
-  example/                ПРИКЛАД споживача — замінити своїм
 src/main/resources
-  application.yml         база, Kafka, actuator, Prometheus, kite.events.*
+  application.yml         база, Kafka, actuator, Prometheus, kite.events.*, kite.tracking.*
   db/migration/V1__…      таблиці outbox і processed_event
+  db/migration/V2__…      tracking_event (партиції), тригер append-only, функція партицій
 src/test/java             юніт-тести + *IT на Postgres і Kafka у Testcontainers
 Dockerfile                шарований образ Spring Boot на temurin-21-jre-alpine
 Makefile                  той самий набір цілей, що й у решти репозиторіїв
@@ -101,7 +132,7 @@ Readiness (`/actuator/health/readiness`) залежить від бази — н
 `openapi.yaml` і JSON Schema сервіс не тримає (5.4, п. 6):
 
 ```xml
-<kite-contracts.version>0.1.0</kite-contracts.version>
+<kite-contracts.version>0.2.1</kite-contracts.version>
 ```
 
 ```bash
@@ -207,11 +238,11 @@ void on(ConsumerRecord<String, String> record) {
 - `processed_event` чиститься через `kite.events.inbox.retention` (14 діб) —
   довше за ретеншен топіків, щоб старий повтор не пройшов як новий.
 
-Робочий приклад — `example/ShipmentEventsListener`.
+Робочий приклад — `journal/ShipmentEventsListener`.
 
 ### Тести
 
-`OutboxIT`, `OutboxPublisherFailureIT` і `InboxIT` перевіряють на справжніх
+`OutboxIT`, `OutboxPublisherFailureIT`, `InboxIT` і `TrackingJournalIT` перевіряють на справжніх
 Postgres і Kafka: подія доходить у конверті CloudEvents, відкат транзакції не
 лишає події, порядок у межах ключа зберігається, збій Kafka не дає наступним
 обігнати, другий публікатор чекає на лок, повтор обробляється один раз, битий
